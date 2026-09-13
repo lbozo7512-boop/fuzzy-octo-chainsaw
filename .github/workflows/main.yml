@@ -9,14 +9,17 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Setup and Start AnyDesk
+      - name: Install AnyDesk via Choco
         run: |
-          # Create dedicated directory for AnyDesk
-          New-Item -ItemType Directory -Path "C:\AnyDesk" -Force
-          $anydeskPath = "C:\AnyDesk\AnyDesk.exe"
-          
-          # Download AnyDesk executable directly to C:\AnyDesk
-          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile $anydeskPath
+          # Install AnyDesk service cleanly using Chocolatey
+          choco install anydesk.install -y --no-progress
+
+          # Ensure AnyDesk background service is running
+          Start-Service -Name "AnyDesk" -ErrorAction SilentlyContinue
+
+      - name: Configure AnyDesk Unattended Access
+        run: |
+          $anydeskPath = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
 
           # Generate a secure 16-character random password
           Add-Type -AssemblyName System.Security
@@ -33,22 +36,18 @@ jobs:
           $rawPassword += $charSet.Special | Get-Random -Count 4
           $password = -join ($rawPassword | Sort-Object { Get-Random })
 
-          # Set unattended access password on portable AnyDesk
+          # Set unattended access password
           echo $password | & $anydeskPath --set-password
 
-          # Start AnyDesk service in background
-          Start-Process -FilePath $anydeskPath -ArgumentList "--with-password"
-          
-          # Wait for AnyDesk service to register and generate ID
-          Start-Sleep -Seconds 10
-
-          # Retrieve AnyDesk ID
-          $anydeskId = (& $anydeskPath --get-id).Trim()
-          
+          # Poll for AnyDesk ID until service initializes
+          $anydeskId = $null
           $retries = 0
-          while ((-not $anydeskId) -and ($retries -lt 6)) {
+          while ((-not $anydeskId) -and ($retries -lt 12)) {
               Start-Sleep -Seconds 5
-              $anydeskId = (& $anydeskPath --get-id).Trim()
+              $rawId = & $anydeskPath --get-id
+              if ($rawId) {
+                  $anydeskId = $rawId.ToString().Trim()
+              }
               $retries++
           }
 

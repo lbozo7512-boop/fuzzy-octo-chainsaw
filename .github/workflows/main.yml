@@ -17,13 +17,29 @@ jobs:
           # Download official AnyDesk executable
           Invoke-WebRequest -Uri $anydeskUrl -OutFile $installerPath
           
-          # Install AnyDesk silently as a background service
+          # Run silent installation
           Start-Process -FilePath $installerPath -ArgumentList "--install", "C:\Program Files (x86)\AnyDesk", "--start-with-win", "--silent" -Wait
           
-          Remove-Item $installerPath -Force
+          # Wait up to 30 seconds for AnyDesk executable to register in system
+          $timeout = 30
+          while (-not (Test-Path "C:\Program Files (x86)\AnyDesk\AnyDesk.exe") -and -not (Test-Path "C:\Program Files (x86)\AnyDesk.exe") -and $timeout -gt 0) {
+              Start-Sleep -Seconds 1
+              $timeout--
+          }
 
       - name: Configure AnyDesk Unattended Access
         run: |
+          # Detect actual AnyDesk installation path
+          $anydeskPath = $null
+          if (Test-Path "C:\Program Files (x86)\AnyDesk\AnyDesk.exe") {
+              $anydeskPath = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          } elseif (Test-Path "C:\Program Files (x86)\AnyDesk.exe") {
+              $anydeskPath = "C:\Program Files (x86)\AnyDesk.exe"
+          } else {
+              Write-Error "AnyDesk executable not found."
+              exit 1
+          }
+
           # Generate a secure 16-character random password
           Add-Type -AssemblyName System.Security
           $charSet = @{
@@ -39,8 +55,6 @@ jobs:
           $rawPassword += $charSet.Special | Get-Random -Count 4
           $password = -join ($rawPassword | Sort-Object { Get-Random })
 
-          $anydeskPath = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
-
           # Set the unattended access password via AnyDesk CLI
           echo $password | & $anydeskPath --set-password
 
@@ -48,7 +62,6 @@ jobs:
           $anydeskId = (& $anydeskPath --get-id).Trim()
 
           if (-not $anydeskId) {
-              # Fallback read if service was slow to initialize ID
               Start-Sleep -Seconds 5
               $anydeskId = (& $anydeskPath --get-id).Trim()
           }

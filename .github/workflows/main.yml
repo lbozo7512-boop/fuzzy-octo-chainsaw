@@ -9,36 +9,14 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Install AnyDesk
+      - name: Setup and Start AnyDesk
         run: |
-          $anydeskUrl = "https://download.anydesk.com/AnyDesk.exe"
-          $installerPath = "$env:TEMP\AnyDesk.exe"
+          # Create dedicated directory for AnyDesk
+          New-Item -ItemType Directory -Path "C:\AnyDesk" -Force
+          $anydeskPath = "C:\AnyDesk\AnyDesk.exe"
           
-          # Download official AnyDesk executable
-          Invoke-WebRequest -Uri $anydeskUrl -OutFile $installerPath
-          
-          # Run silent installation
-          Start-Process -FilePath $installerPath -ArgumentList "--install", "C:\Program Files (x86)\AnyDesk", "--start-with-win", "--silent" -Wait
-          
-          # Wait up to 30 seconds for AnyDesk executable to register in system
-          $timeout = 30
-          while (-not (Test-Path "C:\Program Files (x86)\AnyDesk\AnyDesk.exe") -and -not (Test-Path "C:\Program Files (x86)\AnyDesk.exe") -and $timeout -gt 0) {
-              Start-Sleep -Seconds 1
-              $timeout--
-          }
-
-      - name: Configure AnyDesk Unattended Access
-        run: |
-          # Detect actual AnyDesk installation path
-          $anydeskPath = $null
-          if (Test-Path "C:\Program Files (x86)\AnyDesk\AnyDesk.exe") {
-              $anydeskPath = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
-          } elseif (Test-Path "C:\Program Files (x86)\AnyDesk.exe") {
-              $anydeskPath = "C:\Program Files (x86)\AnyDesk.exe"
-          } else {
-              Write-Error "AnyDesk executable not found."
-              exit 1
-          }
+          # Download AnyDesk executable directly to C:\AnyDesk
+          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile $anydeskPath
 
           # Generate a secure 16-character random password
           Add-Type -AssemblyName System.Security
@@ -55,15 +33,28 @@ jobs:
           $rawPassword += $charSet.Special | Get-Random -Count 4
           $password = -join ($rawPassword | Sort-Object { Get-Random })
 
-          # Set the unattended access password via AnyDesk CLI
+          # Set unattended access password on portable AnyDesk
           echo $password | & $anydeskPath --set-password
 
-          # Retrieve the unique AnyDesk Address / ID
-          $anydeskId = (& $anydeskPath --get-id).Trim()
+          # Start AnyDesk service in background
+          Start-Process -FilePath $anydeskPath -ArgumentList "--with-password"
+          
+          # Wait for AnyDesk service to register and generate ID
+          Start-Sleep -Seconds 10
 
-          if (-not $anydeskId) {
+          # Retrieve AnyDesk ID
+          $anydeskId = (& $anydeskPath --get-id).Trim()
+          
+          $retries = 0
+          while ((-not $anydeskId) -and ($retries -lt 6)) {
               Start-Sleep -Seconds 5
               $anydeskId = (& $anydeskPath --get-id).Trim()
+              $retries++
+          }
+
+          if (-not $anydeskId) {
+              Write-Error "Failed to generate AnyDesk ID."
+              exit 1
           }
 
           echo "ANYDESK_ID=$anydeskId" >> $env:GITHUB_ENV
